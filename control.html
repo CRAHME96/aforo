@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Panel de Control - Oficina</title>
+    <style>
+        body { margin: 0; font-family: 'Segoe UI', sans-serif; background-color: #1e272e; color: white; display: flex; flex-direction: column; justify-content: center; align-items: center; height: 100vh; }
+
+        /* LOGIN */
+        #pantalla-login { display: flex; flex-direction: column; align-items: center; gap: 15px; width: 340px; }
+        #pantalla-login h2 { font-size: 1.8rem; color: #f1c40f; margin-bottom: 5px; letter-spacing: 1px; }
+        #pantalla-login input { width: 100%; padding: 14px 16px; font-size: 1.1rem; border-radius: 10px; border: 2px solid #34495e; background: #2c3e50; color: white; box-sizing: border-box; outline: none; }
+        #pantalla-login input:focus { border-color: #f1c40f; }
+        #btn-login { width: 100%; padding: 14px; font-size: 1.2rem; font-weight: bold; background-color: #27ae60; color: white; border: none; border-radius: 10px; cursor: pointer; transition: background 0.2s; }
+        #btn-login:hover { background-color: #2ecc71; }
+        #error-login { color: #e74c3c; font-size: 0.95rem; min-height: 20px; }
+
+        /* PANEL CONTROL */
+        #pantalla-control { display: none; flex-direction: column; align-items: center; }
+        h1 { font-size: 2.2rem; margin-bottom: 5px; color: #f1c40f; font-weight: bold; letter-spacing: 1px; }
+        #estado { font-size: 1.6rem; margin-bottom: 35px; color: #bdc3c7; }
+        .panel { display: flex; gap: 25px; }
+        .btn { padding: 25px 45px; font-size: 2rem; font-weight: bold; cursor: pointer; border-radius: 15px; border: none; color: white; transition: transform 0.1s, opacity 0.2s; }
+        .btn:active { transform: scale(0.95); }
+        .btn-restar { background-color: #c0392b; }
+        .btn-restar:hover { background-color: #e74c3c; }
+        .btn-agregar { background-color: #27ae60; }
+        .btn-agregar:hover { background-color: #2ecc71; }
+        #conexion { font-size: 0.9rem; margin-top: 20px; color: #7f8c8d; }
+        #btn-logout { margin-top: 25px; background: none; border: 1px solid #7f8c8d; color: #7f8c8d; padding: 8px 20px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; }
+        #btn-logout:hover { border-color: #e74c3c; color: #e74c3c; }
+    </style>
+</head>
+<body>
+
+    <!-- PANTALLA DE LOGIN -->
+    <div id="pantalla-login">
+        <h2>🔒 ACCESO AL CONTROL</h2>
+        <input type="email" id="input-correo" placeholder="Correo electrónico" />
+        <input type="password" id="input-password" placeholder="Contraseña" />
+        <button id="btn-login" onclick="iniciarSesion()">ENTRAR</button>
+        <div id="error-login"></div>
+    </div>
+
+    <!-- PANEL DE CONTROL (se muestra tras login) -->
+    <div id="pantalla-control">
+        <h1>CONTROL DE COLA INTERNO</h1>
+        <div id="estado">Clientes en espera: <span id="num-clientes" style="color:#f1c40f; font-weight:bold;">0</span> (<span id="reloj">00:00:00</span>)</div>
+        <div class="panel">
+            <button class="btn btn-restar" onclick="restarCliente()">- QUITAR</button>
+            <button class="btn btn-agregar" onclick="agregarCliente()">+ AGREGAR</button>
+        </div>
+        <div id="conexion">Conectando con Firebase...</div>
+        <button id="btn-logout" onclick="cerrarSesion()">Cerrar sesión</button>
+    </div>
+
+    <!-- Firebase Auth via CDN -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+        import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBr_C-bGFRD6IwiGD-NM9wzSWf__ZSBrdI",
+            authDomain: "aforo-estacion.firebaseapp.com",
+            databaseURL: "https://aforo-estacion-default-rtdb.firebaseio.com",
+            projectId: "aforo-estacion",
+            storageBucket: "aforo-estacion.firebasestorage.app",
+            messagingSenderId: "823072583425",
+            appId: "1:823072583425:web:3c02f41b52e18e4a083500"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        const urlREST = "https://aforo-estacion-default-rtdb.firebaseio.com/aforo.json";
+        const SEGUNDOS_POR_CLIENTE = 10 * 60;
+
+        let clientesEnCola = 0;
+        let tiempoFin = 0;
+        let intervaloReloj = null;
+        let intervaloSync = null;
+
+        // ── AUTH ──────────────────────────────────────────────
+        window.iniciarSesion = async () => {
+            const correo = document.getElementById('input-correo').value.trim();
+            const password = document.getElementById('input-password').value;
+            document.getElementById('error-login').innerText = '';
+            try {
+                await signInWithEmailAndPassword(auth, correo, password);
+            } catch (e) {
+                document.getElementById('error-login').innerText = '❌ Correo o contraseña incorrectos';
+            }
+        };
+
+        window.cerrarSesion = async () => {
+            await signOut(auth);
+        };
+
+        // Permitir Enter en el campo contraseña
+        document.getElementById('input-password').addEventListener('keydown', e => {
+            if (e.key === 'Enter') window.iniciarSesion();
+        });
+
+        onAuthStateChanged(auth, usuario => {
+            if (usuario) {
+                document.getElementById('pantalla-login').style.display = 'none';
+                document.getElementById('pantalla-control').style.display = 'flex';
+                iniciarSync();
+            } else {
+                document.getElementById('pantalla-login').style.display = 'flex';
+                document.getElementById('pantalla-control').style.display = 'none';
+                if (intervaloSync) clearInterval(intervaloSync);
+                if (intervaloReloj) clearInterval(intervaloReloj);
+            }
+        });
+
+        // ── LÓGICA DE COLA ───────────────────────────────────
+        function formatearTiempo(segundos) {
+            if (segundos <= 0) return "00:00:00";
+            const h = Math.floor(segundos / 3600);
+            const m = Math.floor((segundos % 3600) / 60);
+            const s = segundos % 60;
+            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        }
+
+        function segundosRestantes() {
+            return Math.max(0, Math.round((tiempoFin - Date.now()) / 1000));
+        }
+
+        function clientesSegunTiempo(seg) {
+            return seg <= 0 ? 0 : Math.ceil(seg / SEGUNDOS_POR_CLIENTE);
+        }
+
+        function actualizarUI() {
+            document.getElementById('num-clientes').innerText = clientesEnCola;
+            document.getElementById('reloj').innerText = formatearTiempo(segundosRestantes());
+        }
+
+        function enviarDatosServidor(clientes, tFin) {
+            fetch(urlREST, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ clientesEnCola: clientes, tiempoFin: tFin })
+            }).catch(err => {
+                document.getElementById('conexion').innerText = '🔴 Error al guardar: ' + err.message;
+            });
+        }
+
+        function iniciarRelojLocal() {
+            if (intervaloReloj) clearInterval(intervaloReloj);
+            intervaloReloj = setInterval(() => {
+                const restantes = segundosRestantes();
+                const clientesCorrectos = clientesSegunTiempo(restantes);
+                if (clientesCorrectos !== clientesEnCola) {
+                    clientesEnCola = clientesCorrectos;
+                    enviarDatosServidor(clientesEnCola, clientesEnCola === 0 ? 0 : tiempoFin);
+                }
+                actualizarUI();
+                if (restantes <= 0) {
+                    clearInterval(intervaloReloj);
+                    intervaloReloj = null;
+                }
+            }, 1000);
+        }
+
+        function recibirDatosServidor() {
+            fetch(urlREST)
+                .then(r => r.json())
+                .then(datos => {
+                    document.getElementById('conexion').innerText = '🟢 Conectado a Firebase';
+                    if (datos) {
+                        const nuevoTiempoFin = datos.tiempoFin || 0;
+                        if (nuevoTiempoFin !== tiempoFin) {
+                            tiempoFin = nuevoTiempoFin;
+                            clientesEnCola = clientesSegunTiempo(segundosRestantes());
+                            actualizarUI();
+                            if (segundosRestantes() > 0) iniciarRelojLocal();
+                        }
+                    }
+                })
+                .catch(() => {
+                    document.getElementById('conexion').innerText = '🔴 Sin conexión';
+                });
+        }
+
+        function iniciarSync() {
+            recibirDatosServidor();
+            intervaloSync = setInterval(recibirDatosServidor, 2000);
+        }
+
+        window.agregarCliente = () => {
+            clientesEnCola++;
+            const base = tiempoFin > Date.now() ? tiempoFin : Date.now();
+            tiempoFin = base + SEGUNDOS_POR_CLIENTE * 1000;
+            enviarDatosServidor(clientesEnCola, tiempoFin);
+            actualizarUI();
+            iniciarRelojLocal();
+        };
+
+        window.restarCliente = () => {
+            if (clientesEnCola <= 0) return;
+            clientesEnCola--;
+            if (clientesEnCola === 0) {
+                tiempoFin = 0;
+            } else {
+                tiempoFin -= SEGUNDOS_POR_CLIENTE * 1000;
+                if (tiempoFin < Date.now()) { tiempoFin = 0; clientesEnCola = 0; }
+            }
+            enviarDatosServidor(clientesEnCola, tiempoFin);
+            actualizarUI();
+            if (clientesEnCola === 0 && intervaloReloj) {
+                clearInterval(intervaloReloj);
+                intervaloReloj = null;
+            }
+        };
+    </script>
+</body>
+</html>

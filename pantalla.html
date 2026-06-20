@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sala de Espera - Aforo</title>
+    <style>
+        :root {
+            --color-espera: #cc0000;
+            --color-pase: #1a9e50;
+            --color-bg: #ffffff;
+        }
+        body {
+            margin: 0; font-family: 'Segoe UI', sans-serif; background-color: var(--color-bg);
+            color: #111; display: flex; flex-direction: column; justify-content: space-between;
+            align-items: center; height: 100vh; padding: 40px 0; box-sizing: border-box; overflow: hidden;
+        }
+        #letrero-bienvenida {
+            font-size: 4.5rem; font-weight: 800; letter-spacing: 6px; color: #333;
+            text-transform: uppercase; text-shadow: 0px 2px 6px rgba(0,0,0,0.15);
+        }
+        #contenedor-principal {
+            text-align: center; width: 85%; max-width: 950px; padding: 40px;
+            border-radius: 20px; background-color: #f5f5f5;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.15); transition: all 0.5s ease;
+        }
+        .estado-espera { border: 8px solid var(--color-espera); background-color: #fff0f0 !important; }
+        .estado-pase   { border: 8px solid var(--color-pase);   background-color: #f0fff5 !important; }
+        #mensaje {
+            font-size: 3.2rem; font-weight: bold; text-transform: uppercase;
+            margin-bottom: 10px; letter-spacing: 2px; line-height: 1.3;
+        }
+        #cronometro {
+            font-size: 9rem; font-weight: 900; font-family: monospace;
+            margin: 10px 0; color: #111; text-shadow: 0px 2px 6px rgba(0,0,0,0.15);
+        }
+        #info-cola { font-size: 2.2rem; margin-top: 10px; color: #555; font-weight: 600; }
+        #contenedor-logo { margin-top: 15px; opacity: 0.6; }
+        #logo-empresa { max-height: 140px; max-width: 450px; object-fit: contain; }
+        #estado-conexion { font-size: 0.85rem; position: fixed; bottom: 10px; right: 15px; color: #999; }
+    </style>
+</head>
+<body>
+
+    <div id="letrero-bienvenida">BIENVENIDOS</div>
+
+    <div id="contenedor-principal" class="estado-pase">
+        <div id="mensaje">¡ADELANTE! PASE POR FAVOR</div>
+        <div id="cronometro">00:00:00</div>
+        <div id="info-cola">Clientes en espera: <span id="num-clientes">0</span></div>
+    </div>
+
+    <div id="contenedor-logo">
+        <img id="logo-empresa" src="logo.png" alt="Logo">
+    </div>
+
+    <div id="estado-conexion">Conectando...</div>
+
+    <script>
+        const urlREST = "https://aforo-estacion-default-rtdb.firebaseio.com/aforo.json";
+        const SEGUNDOS_POR_CLIENTE = 10 * 60;
+
+        let tiempoFin = 0;
+        let clientesEnCola = 0;
+        let intervaloReloj = null;
+
+        const contenedor = document.getElementById('contenedor-principal');
+        const mensajeTexto = document.getElementById('mensaje');
+        const cronometroTexto = document.getElementById('cronometro');
+        const numClientesTexto = document.getElementById('num-clientes');
+        const estadoConexion = document.getElementById('estado-conexion');
+
+        function formatearTiempo(segundos) {
+            if (segundos <= 0) return "00:00:00";
+            const horas = Math.floor(segundos / 3600);
+            const minutos = Math.floor((segundos % 3600) / 60);
+            const secs = segundos % 60;
+            return `${horas.toString().padStart(2, '0')}:${minutos.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        function segundosRestantes() {
+            return Math.max(0, Math.round((tiempoFin - Date.now()) / 1000));
+        }
+
+        function clientesSegunTiempo(segundos) {
+            if (segundos <= 0) return 0;
+            return Math.ceil(segundos / SEGUNDOS_POR_CLIENTE);
+        }
+
+        function actualizarInterfaz() {
+            const restantes = segundosRestantes();
+            clientesEnCola = clientesSegunTiempo(restantes);
+            numClientesTexto.innerText = clientesEnCola;
+            if (restantes > 0) {
+                contenedor.className = "estado-espera";
+                mensajeTexto.innerHTML = "TIEMPO APROXIMADO DE ESPERA";
+                mensajeTexto.style.color = "var(--color-espera)";
+                cronometroTexto.innerText = formatearTiempo(restantes);
+                cronometroTexto.style.color = "#111";
+            } else {
+                contenedor.className = "estado-pase";
+                mensajeTexto.innerText = "¡ADELANTE! PASE POR FAVOR";
+                mensajeTexto.style.color = "var(--color-pase)";
+                cronometroTexto.innerText = "00:00:00";
+                cronometroTexto.style.color = "#111";
+            }
+        }
+
+        function iniciarRelojLocal() {
+            if (intervaloReloj) clearInterval(intervaloReloj);
+            intervaloReloj = setInterval(() => {
+                actualizarInterfaz();
+                if (segundosRestantes() <= 0) {
+                    clearInterval(intervaloReloj);
+                    intervaloReloj = null;
+                }
+            }, 1000);
+        }
+
+        function consultarServidor() {
+            fetch(urlREST)
+                .then(r => r.json())
+                .then(datos => {
+                    estadoConexion.innerText = '🟢 Firebase conectado';
+                    if (datos) {
+                        const nuevoTiempoFin = datos.tiempoFin || 0;
+                        if (nuevoTiempoFin !== tiempoFin) {
+                            tiempoFin = nuevoTiempoFin;
+                            actualizarInterfaz();
+                            if (segundosRestantes() > 0) iniciarRelojLocal();
+                        }
+                    }
+                })
+                .catch(err => {
+                    estadoConexion.innerText = '🔴 Sin conexión Firebase';
+                    console.error("Error Firebase:", err);
+                });
+        }
+
+        setInterval(consultarServidor, 2000);
+        consultarServidor();
+    </script>
+</body>
+</html>
