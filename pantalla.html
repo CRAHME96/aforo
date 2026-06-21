@@ -56,10 +56,25 @@
 
     <div id="estado-conexion">Conectando...</div>
 
-    <script>
-        const urlREST = "https://aforo-estacion-default-rtdb.firebaseio.com/aforo.json";
-        const SEGUNDOS_POR_CLIENTE = 10 * 60;
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-app.js";
+        import { getDatabase, ref, onValue } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-database.js";
 
+        const firebaseConfig = {
+            apiKey: "AIzaSyBr_C-bGfRD6IwiGD-NM9wzSWf__ZSBrdI",
+            authDomain: "aforo-estacion.firebaseapp.com",
+            databaseURL: "https://aforo-estacion-default-rtdb.firebaseio.com",
+            projectId: "aforo-estacion",
+            storageBucket: "aforo-estacion.firebasestorage.app",
+            messagingSenderId: "823072583425",
+            appId: "1:823072583425:web:3c02f41b52e18e4a083500"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getDatabase(app);
+        const aforoRef = ref(db, 'aforo');
+
+        const SEGUNDOS_POR_CLIENTE = 10 * 60;
         let tiempoFin = 0;
         let clientesEnCola = 0;
         let intervaloReloj = null;
@@ -117,28 +132,21 @@
             }, 1000);
         }
 
-        function consultarServidor() {
-            fetch(urlREST)
-                .then(r => r.json())
-                .then(datos => {
-                    estadoConexion.innerText = '🟢 Firebase conectado';
-                    if (datos) {
-                        const nuevoTiempoFin = datos.tiempoFin || 0;
-                        if (nuevoTiempoFin !== tiempoFin) {
-                            tiempoFin = nuevoTiempoFin;
-                            actualizarInterfaz();
-                            if (segundosRestantes() > 0) iniciarRelojLocal();
-                        }
-                    }
-                })
-                .catch(err => {
-                    estadoConexion.innerText = '🔴 Sin conexión Firebase';
-                    console.error("Error Firebase:", err);
-                });
-        }
-
-        setInterval(consultarServidor, 2000);
-        consultarServidor();
+        // ✅ Realtime listener — actualización instantánea sin polling
+        onValue(aforoRef, (snapshot) => {
+            estadoConexion.innerText = '🟢 Firebase conectado';
+            const datos = snapshot.val();
+            if (datos) {
+                const nuevoTiempoFin = datos.tiempoFin || 0;
+                if (nuevoTiempoFin !== tiempoFin) {
+                    tiempoFin = nuevoTiempoFin;
+                    actualizarInterfaz();
+                    if (segundosRestantes() > 0) iniciarRelojLocal();
+                }
+            }
+        }, (error) => {
+            estadoConexion.innerText = '🔴 Sin conexión Firebase';
+        });
     </script>
 </body>
 </html>

@@ -34,7 +34,6 @@
 </head>
 <body>
 
-    <!-- PANTALLA DE LOGIN -->
     <div id="pantalla-login">
         <h2>🔒 ACCESO AL CONTROL</h2>
         <input type="email" id="input-correo" placeholder="Correo electrónico" />
@@ -43,7 +42,6 @@
         <div id="error-login"></div>
     </div>
 
-    <!-- PANEL DE CONTROL (se muestra tras login) -->
     <div id="pantalla-control">
         <h1>CONTROL DE COLA INTERNO</h1>
         <div id="estado">Clientes en espera: <span id="num-clientes" style="color:#f1c40f; font-weight:bold;">0</span> (<span id="reloj">00:00:00</span>)</div>
@@ -55,10 +53,10 @@
         <button id="btn-logout" onclick="cerrarSesion()">Cerrar sesión</button>
     </div>
 
-    <!-- Firebase Auth via CDN -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-app.js";
         import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-auth.js";
+        import { getDatabase, ref, onValue, set } from "https://www.gstatic.com/firebasejs/11.9.0/firebase-database.js";
 
         const firebaseConfig = {
             apiKey: "AIzaSyBr_C-bGfRD6IwiGD-NM9wzSWf__ZSBrdI",
@@ -72,14 +70,14 @@
 
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
+        const db = getDatabase(app);
+        const aforoRef = ref(db, 'aforo2');
 
-        const urlREST = "https://aforo-estacion-default-rtdb.firebaseio.com/aforo2.json";
         const SEGUNDOS_POR_CLIENTE = 10 * 60;
-
         let clientesEnCola = 0;
         let tiempoFin = 0;
         let intervaloReloj = null;
-        let intervaloSync = null;
+        let escuchando = false;
 
         // ── AUTH ──────────────────────────────────────────────
         window.iniciarSesion = async () => {
@@ -97,7 +95,6 @@
             await signOut(auth);
         };
 
-        // Permitir Enter en el campo contraseña
         document.getElementById('input-password').addEventListener('keydown', e => {
             if (e.key === 'Enter') window.iniciarSesion();
         });
@@ -106,16 +103,15 @@
             if (usuario) {
                 document.getElementById('pantalla-login').style.display = 'none';
                 document.getElementById('pantalla-control').style.display = 'flex';
-                iniciarSync();
+                iniciarListener();
             } else {
                 document.getElementById('pantalla-login').style.display = 'flex';
                 document.getElementById('pantalla-control').style.display = 'none';
-                if (intervaloSync) clearInterval(intervaloSync);
-                if (intervaloReloj) clearInterval(intervaloReloj);
+                if (intervaloReloj) { clearInterval(intervaloReloj); intervaloReloj = null; }
             }
         });
 
-        // ── LÓGICA DE COLA ───────────────────────────────────
+        // ── LÓGICA ───────────────────────────────────────────
         function formatearTiempo(segundos) {
             if (segundos <= 0) return "00:00:00";
             const h = Math.floor(segundos / 3600);
@@ -137,14 +133,11 @@
             document.getElementById('reloj').innerText = formatearTiempo(segundosRestantes());
         }
 
-        function enviarDatosServidor(clientes, tFin) {
-            fetch(urlREST, {
-                method: "PUT",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ clientesEnCola: clientes, tiempoFin: tFin })
-            }).catch(err => {
-                document.getElementById('conexion').innerText = '🔴 Error al guardar: ' + err.message;
-            });
+        function guardarEnFirebase(clientes, tFin) {
+            set(aforoRef, { clientesEnCola: clientes, tiempoFin: tFin })
+                .catch(err => {
+                    document.getElementById('conexion').innerText = '🔴 Error al guardar: ' + err.message;
+                });
         }
 
         function iniciarRelojLocal() {
@@ -154,7 +147,7 @@
                 const clientesCorrectos = clientesSegunTiempo(restantes);
                 if (clientesCorrectos !== clientesEnCola) {
                     clientesEnCola = clientesCorrectos;
-                    enviarDatosServidor(clientesEnCola, clientesEnCola === 0 ? 0 : tiempoFin);
+                    guardarEnFirebase(clientesEnCola, clientesEnCola === 0 ? 0 : tiempoFin);
                 }
                 actualizarUI();
                 if (restantes <= 0) {
@@ -164,36 +157,30 @@
             }, 1000);
         }
 
-        function recibirDatosServidor() {
-            fetch(urlREST)
-                .then(r => r.json())
-                .then(datos => {
-                    document.getElementById('conexion').innerText = '🟢 Conectado a Firebase';
-                    if (datos) {
-                        const nuevoTiempoFin = datos.tiempoFin || 0;
-                        if (nuevoTiempoFin !== tiempoFin) {
-                            tiempoFin = nuevoTiempoFin;
-                            clientesEnCola = clientesSegunTiempo(segundosRestantes());
-                            actualizarUI();
-                            if (segundosRestantes() > 0) iniciarRelojLocal();
-                        }
+        function iniciarListener() {
+            // ✅ Realtime listener — Firebase avisa al instante cuando hay cambios
+            onValue(aforoRef, (snapshot) => {
+                document.getElementById('conexion').innerText = '🟢 Conectado a Firebase';
+                const datos = snapshot.val();
+                if (datos) {
+                    const nuevoTiempoFin = datos.tiempoFin || 0;
+                    if (nuevoTiempoFin !== tiempoFin) {
+                        tiempoFin = nuevoTiempoFin;
+                        clientesEnCola = clientesSegunTiempo(segundosRestantes());
+                        actualizarUI();
+                        if (segundosRestantes() > 0) iniciarRelojLocal();
                     }
-                })
-                .catch(() => {
-                    document.getElementById('conexion').innerText = '🔴 Sin conexión';
-                });
-        }
-
-        function iniciarSync() {
-            recibirDatosServidor();
-            intervaloSync = setInterval(recibirDatosServidor, 2000);
+                }
+            }, (error) => {
+                document.getElementById('conexion').innerText = '🔴 Sin conexión';
+            });
         }
 
         window.agregarCliente = () => {
             clientesEnCola++;
             const base = tiempoFin > Date.now() ? tiempoFin : Date.now();
             tiempoFin = base + SEGUNDOS_POR_CLIENTE * 1000;
-            enviarDatosServidor(clientesEnCola, tiempoFin);
+            guardarEnFirebase(clientesEnCola, tiempoFin);
             actualizarUI();
             iniciarRelojLocal();
         };
@@ -207,7 +194,7 @@
                 tiempoFin -= SEGUNDOS_POR_CLIENTE * 1000;
                 if (tiempoFin < Date.now()) { tiempoFin = 0; clientesEnCola = 0; }
             }
-            enviarDatosServidor(clientesEnCola, tiempoFin);
+            guardarEnFirebase(clientesEnCola, tiempoFin);
             actualizarUI();
             if (clientesEnCola === 0 && intervaloReloj) {
                 clearInterval(intervaloReloj);
